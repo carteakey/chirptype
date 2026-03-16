@@ -1,110 +1,61 @@
-# ChirpType
+# ChirpType 🐦
 
 Tap a hotkey, speak, and your words appear — in any app, instantly.
 
-ChirpType is a macOS menu bar dictation tool built on [parakeet-mlx](https://github.com/senstella/parakeet-mlx). It runs entirely on-device using Apple Silicon. No cloud, no API keys, no subscription. Just fast, private speech-to-text that stays out of your way.
+Runs entirely on-device via Apple Silicon. No cloud, no API keys, no subscription.
 
-**Philosophy:** one small icon in your menu bar, one hotkey, nothing else. It should feel like a native part of the OS — always there, never in the way. Every decision in this project is made in favour of simplicity over features.
-
-Requires Apple Silicon.
-
-## Prerequisites
-
-1. **uv** — `brew install uv`
-2. **ffmpeg** — `brew install ffmpeg`
-3. **Microphone permission** — macOS will prompt on first run
-4. **Accessibility permission** — required for auto-paste
-   - System Settings → Privacy & Security → Accessibility → add Terminal (or your shell)
+> One icon in your menu bar. One hotkey. Nothing else.
 
 ## Install
 
 ```bash
+brew install uv ffmpeg
 git clone https://github.com/carteakey/chirptype
 cd chirptype
-./install.sh
+uv pip install -r requirements.txt
+./start.sh
 ```
 
-This installs the `chirptype` command via `uv tool install` and registers a LaunchAgent so it auto-starts at login. The menu bar icon appears immediately.
+Grant **Microphone** and **Accessibility** permissions when prompted.
 
-**Uninstall:**
+To auto-start at login, add `start.sh` to **System Settings → General → Login Items**.
+
+## Usage
+
+**Hotkey:** Right Option `⌥`
+
+| | |
+|---|---|
+| Hold | speak → release to transcribe |
+| Double-tap | locks recording → tap again to stop |
+
+Text is pasted directly into whatever app is in focus. Each transcription is appended to `~/.chirptype_log.txt`.
+
+## start.sh
+
 ```bash
-./install.sh uninstall
+./start.sh          # start in background
+./start.sh stop     # stop
+./start.sh logs     # tail output log
 ```
-
-## Development
-
-```bash
-uv run python chirptype.py
-```
-
-## Recording
-
-**Hotkey:** Right Option (⌥ right)
-
-| Mode | How |
-|------|-----|
-| Press-and-hold | Hold ⌥ right while speaking → release to transcribe |
-| Double-tap lock | Tap ⌥ right twice → speak → tap once more to transcribe |
-
-Transcription is pasted automatically into your active text field. A **ChirpType** notification shows a preview of what was pasted.
-
-## Menu Bar
-
-| Label | State |
-|-------|-------|
-| `ct`  | Idle — ready to record |
-| `rec` | Recording |
-| `···` | Processing transcription |
-
-The menu also shows the last transcribed text and a **Quit** option.
 
 ## Configuration
 
-Settings are stored in `~/.chirptype.json` and persist across restarts. You can also edit them directly in the menu:
+Edit the constants at the top of `chirptype.py`:
 
-- **Model** — pick a Parakeet variant from the submenu (restart to apply)
-- **Auto-stop on silence** — toggles 2-second silence detection on/off
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `MODEL_NAME` | `parakeet-tdt-0.6b-v3` | Model to load |
+| `HOLD_THRESHOLD` | `0.3` | Seconds to distinguish tap from hold |
+| `DOUBLE_TAP_WINDOW` | `0.4` | Window for double-tap detection |
 
-`~/.chirptype.json` example:
-```json
-{
-  "hotkey": "alt_r",
-  "model": "mlx-community/parakeet-tdt-0.6b-v3",
-  "silence": 0.0
-}
-```
-
-| Key | Default | Options |
-|-----|---------|---------|
-| `hotkey` | `alt_r` | `alt_r`, `alt`, `ctrl_r`, `f13`–`f19` |
-| `model` | `parakeet-tdt-0.6b-v3` | see Model section |
-| `silence` | `0.0` (off) | seconds, e.g. `2.0` |
-
-## CLI Flags
-
-| Flag | Description |
-|------|-------------|
-| `--silence SECS` | Auto-stop after N seconds of silence (overrides config) |
-| `--device NAME_OR_ID` | Select a specific input device |
-| `--list-devices` | Print available audio input devices and exit |
-| `--quiet` / `-q` | Suppress all terminal output except errors |
-
-```bash
-chirptype --device "USB Audio" --silence 2.0
-chirptype --list-devices
-```
+CLI flags: `--silence SECS`, `--device NAME_OR_ID`, `--list-devices`, `--quiet`
 
 ## Model
 
-Available models (selectable from the menu):
+Default: **[mlx-community/parakeet-tdt-0.6b-v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)** — NVIDIA Parakeet-TDT 0.6B, English-only, ~1.2 GB, downloaded on first run.
 
-| Model | Size | Notes |
-|-------|------|-------|
-| `parakeet-tdt-0.6b-v3` | ~1.2 GB | Default, fast |
-| `parakeet-tdt-0.6b-v2` | ~1.2 GB | Previous version |
-| `parakeet-tdt-1.1b` | ~2.1 GB | More accurate, slower |
-
-All models are English-only, optimised for Apple Silicon via MLX, and downloaded on first use.
+Other options: `parakeet-tdt-0.6b-v2`, `parakeet-tdt-1.1b` (~2.1 GB, more accurate).
 
 ## License
 

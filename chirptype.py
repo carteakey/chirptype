@@ -2,10 +2,8 @@
 """
 ChirpType — macOS menu bar dictation powered by parakeet-mlx
 
-Hotkey: configurable via ~/.chirptype.json (default: Right Option ⌥ right)
-
-Two recording modes:
-  Press-and-hold : Hold hotkey while speaking, release to transcribe.
+Hotkey: Right Option (⌥ right)
+  Press-and-hold : Hold while speaking, release to transcribe.
   Double-tap     : Double-tap to lock recording, tap once more to transcribe.
 """
 
@@ -15,8 +13,7 @@ import sys
 import time
 import subprocess
 import argparse
-import json
-import shutil
+from datetime import datetime
 from pathlib import Path
 import numpy as np
 import mlx.core as mx
@@ -27,15 +24,22 @@ from pynput.keyboard import Key
 from parakeet_mlx import from_pretrained
 
 # ---------------------------------------------------------------------------
+# Edit these to customise
+# ---------------------------------------------------------------------------
+
+MODEL_NAME        = "mlx-community/parakeet-tdt-0.6b-v3"
+CHUNK_DURATION    = 1.0   # seconds per audio chunk
+HOLD_THRESHOLD    = 0.3   # seconds to distinguish tap from hold
+DOUBLE_TAP_WINDOW = 0.4   # seconds to wait for a second tap
+
+ICON_PATH = Path(__file__).parent / "icon.png"
+LOG_PATH  = Path.home() / ".chirptype_log.txt"
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-CHUNK_DURATION       = 1.0
-HOLD_THRESHOLD       = 0.3
-DOUBLE_TAP_WINDOW    = 0.4
-SILENCE_DEFAULT_SECS = 2.0
-
-ICON_IDLE       = " ct "
+ICON_IDLE       = ""       # icon only — title cleared when icon is present
 ICON_RECORDING  = " rec "
 ICON_PROCESSING = " ··· "
 
@@ -48,44 +52,6 @@ _SOUNDS = {
     "start": "/System/Library/Sounds/Tink.aiff",
     "stop":  "/System/Library/Sounds/Pop.aiff",
 }
-
-KNOWN_MODELS = [
-    "mlx-community/parakeet-tdt-0.6b-v2",
-    "mlx-community/parakeet-tdt-0.6b-v3",
-    "mlx-community/parakeet-tdt-1.1b",
-]
-
-HOTKEY_MAP = {
-    "alt_r":  Key.alt_r,
-    "alt":    Key.alt,
-    "ctrl_r": Key.ctrl_r,
-    "f13": Key.f13, "f14": Key.f14, "f15": Key.f15,
-    "f16": Key.f16, "f17": Key.f17, "f18": Key.f18, "f19": Key.f19,
-}
-
-CONFIG_PATH = Path.home() / ".chirptype.json"
-ICON_PATH   = Path(__file__).parent / "icon.png"
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def load_config() -> dict:
-    defaults = {
-        "hotkey":  "alt_r",
-        "model":   "mlx-community/parakeet-tdt-0.6b-v3",
-        "silence": 0.0,
-    }
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return {**defaults, **json.load(f)}
-    return defaults
-
-
-def save_config(cfg: dict) -> None:
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, indent=2)
-
 
 # ---------------------------------------------------------------------------
 # Runtime state
@@ -104,7 +70,6 @@ input_device: str | int | None = None
 silence_duration: float = 0.0
 last_audio_time: float = 0.0
 session_words: int = 0
-hotkey: Key = Key.alt_r
 
 app: "ChirpTypeApp | None" = None
 
@@ -114,64 +79,25 @@ app: "ChirpTypeApp | None" = None
 # ---------------------------------------------------------------------------
 
 class ChirpTypeApp(rumps.App):
-    def __init__(self, current_model: str, initial_silence: float):
-        super().__init__("ChirpType", title=ICON_IDLE, template=True, quit_button="Quit")
-
+    def __init__(self):
+        icon = str(ICON_PATH) if ICON_PATH.exists() else None
+        super().__init__("ChirpType", title=" ct " if not icon else "",
+                         icon=icon, template=True, quit_button="Quit")
         self.status_item = rumps.MenuItem("Loading…")
         self.words_item  = rumps.MenuItem("Words: 0")
         self.last_item   = rumps.MenuItem("Last: —")
-
-        self.silence_item = rumps.MenuItem("Auto-stop on silence",
-                                           callback=self._toggle_silence)
-        self.silence_item.state = initial_silence > 0
-
-        self._model_items: list[rumps.MenuItem] = []
-        self._model_map:   dict[str, str] = {}
-        model_menu = rumps.MenuItem("Model")
-        for m in KNOWN_MODELS:
-            short = m.split("/")[-1]
-            item = rumps.MenuItem(short, callback=self._select_model)
-            item.state = (m == current_model)
-            model_menu.add(item)
-            self._model_items.append(item)
-            self._model_map[short] = m
-
-        self.menu = [
-            self.status_item,
-            None,
-            self.words_item,
-            self.last_item,
-            None,
-            self.silence_item,
-            model_menu,
-        ]
-
-    def _toggle_silence(self, sender) -> None:
-        global silence_duration
-        sender.state = not sender.state
-        silence_duration = SILENCE_DEFAULT_SECS if sender.state else 0.0
-        cfg = load_config()
-        cfg["silence"] = silence_duration
-        save_config(cfg)
-
-    def _select_model(self, sender) -> None:
-        for item in self._model_items:
-            item.state = (item.title == sender.title)
-        cfg = load_config()
-        cfg["model"] = self._model_map[sender.title]
-        save_config(cfg)
-        self.status_item.title = "Restart to apply"
+        self.menu = [self.status_item, None, self.words_item, self.last_item]
 
 
 def set_menu_bar_state(icon_text: str, status: str) -> None:
     if app is None:
         return
-    if icon_text == ICON_IDLE and ICON_PATH.exists():
-        app.icon = str(ICON_PATH)
-        app.title = ""
+    # If the icon file exists: icon is always shown; only add a title when active.
+    # If no icon file: use text labels for all states.
+    if ICON_PATH.exists():
+        app.title = icon_text  # "" for idle, " rec " or " ··· " when active
     else:
-        app.icon = None
-        app.title = icon_text
+        app.title = " ct " if icon_text == ICON_IDLE else icon_text
     app.status_item.title = status
 
 
@@ -191,6 +117,11 @@ def play_sound(name: str) -> None:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def log_transcription(text: str) -> None:
+    with open(LOG_PATH, "a") as f:
+        f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  {text}\n")
+
+
 def start_recording() -> None:
     global last_audio_time
     last_audio_time = time.time()
@@ -204,8 +135,7 @@ def stop_recording(mode_msg: str = "") -> None:
     recording.clear()
     play_sound("stop")
     set_menu_bar_state(ICON_PROCESSING, "Processing…")
-    suffix = f" ({mode_msg})" if mode_msg else ""
-    log(f"\n[Stopped{suffix}] Processing transcription...")
+    log(f"\n[Stopped{f' ({mode_msg})' if mode_msg else ''}] Processing...")
 
 
 def _check_silence() -> None:
@@ -220,7 +150,7 @@ def _check_silence() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hotkey state-machine callbacks
+# Hotkey state machine
 # ---------------------------------------------------------------------------
 
 def on_hotkey_activated() -> None:
@@ -241,7 +171,7 @@ def on_hotkey_activated() -> None:
                 _double_tap_timer.cancel()
                 _double_tap_timer = None
             state = LOCKED_RECORDING
-            log("[Locked] Recording is locked — tap hotkey again to stop")
+            log("[Locked] Tap hotkey again to stop")
 
         elif state == LOCKED_RECORDING:
             stop_recording("locked mode")
@@ -255,10 +185,10 @@ def on_hotkey_deactivated() -> None:
         if not hotkey_active:
             return
         hotkey_active = False
-        held_duration = time.time() - hotkey_press_time
+        held = time.time() - hotkey_press_time
 
         if state == HOLD_RECORDING:
-            if held_duration >= HOLD_THRESHOLD:
+            if held >= HOLD_THRESHOLD:
                 stop_recording("hold mode")
                 state = IDLE
             else:
@@ -277,17 +207,13 @@ def _double_tap_timeout() -> None:
         _double_tap_timer = None
 
 
-# ---------------------------------------------------------------------------
-# pynput keyboard listeners
-# ---------------------------------------------------------------------------
-
 def on_press(key) -> None:
-    if key == hotkey:
+    if key == Key.alt_r:
         on_hotkey_activated()
 
 
 def on_release(key) -> None:
-    if key == hotkey:
+    if key == Key.alt_r:
         on_hotkey_deactivated()
 
 
@@ -309,13 +235,16 @@ def copy_and_paste(text: str) -> None:
 
     time.sleep(0.3)
 
-    applescript = 'tell application "System Events" to keystroke "v" using {command down}'
-    result = subprocess.run(['osascript', '-e', applescript],
-                            capture_output=True, text=True, timeout=5)
+    result = subprocess.run(
+        ['osascript', '-e',
+         'tell application "System Events" to keystroke "v" using {command down}'],
+        capture_output=True, text=True, timeout=5,
+    )
 
     if result.returncode == 0:
         log("Pasted successfully")
         session_words += len(text.split())
+        log_transcription(text)
         preview = text[:60] + ("…" if len(text) > 60 else "")
         if app is not None:
             app.words_item.title = f"Words: {session_words}"
@@ -325,13 +254,12 @@ def copy_and_paste(text: str) -> None:
             except Exception:
                 pass
     else:
-        error_msg = result.stderr.strip()
-        if "not allowed assistive access" in error_msg.lower():
-            print("ERROR: Accessibility permission denied", file=sys.stderr)
-            print("Go to: System Settings > Privacy & Security > Accessibility",
-                  file=sys.stderr)
+        err = result.stderr.strip()
+        if "not allowed assistive access" in err.lower():
+            print("ERROR: Accessibility permission denied. "
+                  "System Settings → Privacy & Security → Accessibility", file=sys.stderr)
         else:
-            print(f"ERROR: Paste failed: {error_msg}", file=sys.stderr)
+            print(f"ERROR: Paste failed: {err}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -344,10 +272,8 @@ def audio_callback(indata, frames, time_info, status) -> None:
         print(f"Audio status: {status}", file=sys.stderr)
     if recording.is_set():
         audio_queue.put(indata.copy())
-        if silence_duration > 0:
-            rms = float(np.sqrt(np.mean(indata ** 2)))
-            if rms > 0.01:
-                last_audio_time = time.time()
+        if silence_duration > 0 and float(np.sqrt(np.mean(indata ** 2))) > 0.01:
+            last_audio_time = time.time()
 
 
 def transcription_loop(model, sample_rate: int) -> None:
@@ -368,29 +294,17 @@ def transcription_loop(model, sample_rate: int) -> None:
                 while recording.is_set():
                     _check_silence()
                     try:
-                        audio_chunk = audio_queue.get(timeout=0.1)
-                        transcriber.add_audio(mx.array(audio_chunk.flatten()))
-
+                        transcriber.add_audio(mx.array(audio_queue.get(timeout=0.1).flatten()))
                         result = transcriber.result
                         if result.text != last_text and not quiet_mode:
-                            cols = shutil.get_terminal_size().columns
-                            prefix = "Transcription: "
-                            max_text = cols - len(prefix) - 1
-                            tail = result.text[-max_text:] if len(result.text) > max_text else result.text
-                            print(f"\r{prefix}{tail:<{max_text}}", end='', flush=True)
+                            print(f"\rTranscription: {result.text}", end='', flush=True)
                             last_text = result.text
                     except queue.Empty:
                         continue
 
                 result = transcriber.result
-
                 if not quiet_mode:
-                    print(f"\n\nFinal transcription:\n{result.text}\n")
-                    if result.sentences:
-                        print("Timestamps:")
-                        for s in result.sentences:
-                            print(f"  [{s.start:.2f}s - {s.end:.2f}s] {s.text}")
-                        print()
+                    print(f"\n\nFinal: {result.text}\n")
 
                 if result.text.strip():
                     copy_and_paste(result.text)
@@ -399,78 +313,47 @@ def transcription_loop(model, sample_rate: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Startup
+# Startup + entry point
 # ---------------------------------------------------------------------------
 
-def _startup(model_name: str, hotkey_name: str) -> None:
+def _startup() -> None:
     set_menu_bar_state(ICON_PROCESSING, "Loading model…")
-    log("\nLoading model...")
+    log(f"\nLoading {MODEL_NAME}...")
 
-    model = from_pretrained(model_name)
+    model = from_pretrained(MODEL_NAME)
     sample_rate = model.preprocessor_config.sample_rate
 
     if not quiet_mode:
-        print(f"Model loaded:  {model_name}")
-        print(f"Sample rate:   {sample_rate} Hz")
-        if input_device is not None:
-            print(f"Input device:  {input_device}")
-        if silence_duration > 0:
-            print(f"Auto-silence:  {silence_duration}s")
-        print("\n" + "=" * 60)
-        print(f"Hotkey: {hotkey_name}")
-        print("  Press-and-hold → release to transcribe")
-        print("  Double-tap     → locked recording, tap again to stop")
-        print("=" * 60 + "\n")
+        print(f"Ready — {sample_rate} Hz | hotkey: Right Option (⌥)")
 
     set_menu_bar_state(ICON_IDLE, "Idle")
+    keyboard.Listener(on_press=on_press, on_release=on_release).start()
+    threading.Thread(target=transcription_loop, args=(model, sample_rate), daemon=True).start()
 
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
-
-    threading.Thread(target=transcription_loop, args=(model, sample_rate),
-                     daemon=True).start()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
-    global quiet_mode, input_device, silence_duration, hotkey, app
+    global quiet_mode, input_device, silence_duration, app
 
     parser = argparse.ArgumentParser(description='ChirpType — macOS menu bar dictation')
-    parser.add_argument('--quiet', '-q', action='store_true',
-                        help='Suppress all output except errors')
-    parser.add_argument('--device', default=None,
-                        help='Input device name or index (default: system default)')
-    parser.add_argument('--list-devices', action='store_true',
-                        help='List available audio input devices and exit')
-    parser.add_argument('--silence', type=float, default=None, metavar='SECS',
-                        help='Auto-stop after N seconds of silence (overrides config)')
+    parser.add_argument('--quiet', '-q', action='store_true')
+    parser.add_argument('--device', default=None, help='Input device name or index')
+    parser.add_argument('--list-devices', action='store_true')
+    parser.add_argument('--silence', type=float, default=0.0, metavar='SECS',
+                        help='Auto-stop after N seconds of silence (0 = off)')
     args = parser.parse_args()
 
     if args.list_devices:
         print(sd.query_devices())
         sys.exit(0)
 
-    cfg = load_config()
-
-    quiet_mode = args.quiet
-    input_device = args.device
+    quiet_mode       = args.quiet
+    silence_duration = args.silence
+    input_device     = args.device
     if isinstance(input_device, str) and input_device.isdigit():
         input_device = int(input_device)
 
-    silence_duration = args.silence if args.silence is not None else cfg["silence"]
-    hotkey = HOTKEY_MAP.get(cfg["hotkey"], Key.alt_r)
-
-    if not quiet_mode:
-        print("=" * 60)
-        print("ChirpType — macOS menu bar dictation")
-        print("=" * 60)
-
-    app = ChirpTypeApp(current_model=cfg["model"], initial_silence=silence_duration)
-    threading.Thread(target=_startup, args=(cfg["model"], cfg["hotkey"]),
-                     daemon=True).start()
+    app = ChirpTypeApp()
+    threading.Thread(target=_startup, daemon=True).start()
     app.run()
 
 
