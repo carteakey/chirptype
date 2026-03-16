@@ -27,6 +27,7 @@ from parakeet_mlx import from_pretrained
 # Edit these to customise
 # ---------------------------------------------------------------------------
 
+VERSION           = "0.1.0"
 MODEL_NAME        = "mlx-community/parakeet-tdt-0.6b-v3"
 CHUNK_DURATION    = 1.0   # seconds per audio chunk
 HOLD_THRESHOLD    = 0.3   # seconds to distinguish tap from hold
@@ -83,12 +84,12 @@ class ChirpTypeApp(rumps.App):
     def __init__(self):
         super().__init__("ChirpType", title="", icon=str(ICON_PATH),
                          template=True, quit_button="Quit")
-        self.status_item = rumps.MenuItem("Loading…")
+        self.title_item  = rumps.MenuItem(f"ChirpType v{VERSION}")
         self.words_item  = rumps.MenuItem("Words: 0")
         self.last_item   = rumps.MenuItem("Last: —")
         self.copy_item   = rumps.MenuItem("Copy last transcript", callback=self._copy_last)
         self._last_text  = ""
-        self.menu = [self.status_item, None, self.words_item, self.last_item, self.copy_item]
+        self.menu = [self.title_item, None, self.words_item, self.last_item, self.copy_item]
 
     def _copy_last(self, _) -> None:
         if self._last_text:
@@ -97,7 +98,7 @@ class ChirpTypeApp(rumps.App):
             )
 
 
-def set_menu_bar_state(state_name: str, status: str) -> None:
+def set_menu_bar_state(state_name: str) -> None:
     if app is None:
         return
     if state_name == ICON_IDLE:
@@ -107,7 +108,6 @@ def set_menu_bar_state(state_name: str, status: str) -> None:
         app.icon     = str(ICON_REC_PATH)
         app.template = False
     app.title = ""
-    app.status_item.title = status
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +136,14 @@ def start_recording() -> None:
     last_audio_time = time.time()
     recording.set()
     play_sound("start")
-    set_menu_bar_state(ICON_RECORDING, "Recording…")
+    set_menu_bar_state(ICON_RECORDING)
     log("\n[Recording...] Speak now")
 
 
 def stop_recording(mode_msg: str = "") -> None:
     recording.clear()
     play_sound("stop")
-    set_menu_bar_state(ICON_PROCESSING, "Processing…")
+    set_menu_bar_state(ICON_PROCESSING)
     log(f"\n[Stopped{f' ({mode_msg})' if mode_msg else ''}] Processing...")
 
 
@@ -319,7 +319,7 @@ def transcription_loop(model, sample_rate: int) -> None:
                 if result.text.strip():
                     copy_and_paste(result.text)
 
-                set_menu_bar_state(ICON_IDLE, "Idle")
+                set_menu_bar_state(ICON_IDLE)
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ def transcription_loop(model, sample_rate: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _startup() -> None:
-    set_menu_bar_state(ICON_PROCESSING, "Loading model…")
+    set_menu_bar_state(ICON_PROCESSING)
     log(f"\nLoading {MODEL_NAME}...")
 
     model = from_pretrained(MODEL_NAME)
@@ -336,7 +336,7 @@ def _startup() -> None:
     if not quiet_mode:
         print(f"Ready — {sample_rate} Hz | hotkey: Right Option (⌥)")
 
-    set_menu_bar_state(ICON_IDLE, "Idle")
+    set_menu_bar_state(ICON_IDLE)
     keyboard.Listener(on_press=on_press, on_release=on_release).start()
     threading.Thread(target=transcription_loop, args=(model, sample_rate), daemon=True).start()
 
