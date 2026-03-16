@@ -50,11 +50,11 @@ Transcription is pasted automatically into your active text field. A **ChirpType
 
 ## Menu Bar
 
-| Icon | State |
-|------|-------|
-| 🎙 | Idle — ready to record |
-| 🔴 | Recording |
-| ⏳ | Processing transcription |
+| Label | State |
+|-------|-------|
+| `ct`  | Idle — ready to record |
+| `rec` | Recording |
+| `···` | Processing transcription |
 
 The menu also shows the last transcribed text and a **Quit** option.
 

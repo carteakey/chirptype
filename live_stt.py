@@ -32,9 +32,9 @@ HOLD_THRESHOLD = 0.3
 DOUBLE_TAP_WINDOW = 0.4
 
 # Menu bar icon states
-ICON_IDLE       = "🎙"
-ICON_RECORDING  = "🔴"
-ICON_PROCESSING = "⏳"
+ICON_IDLE       = " ct "
+ICON_RECORDING  = " rec "
+ICON_PROCESSING = " ··· "
 
 # --- State machine ---
 # IDLE              : not recording
