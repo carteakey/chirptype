@@ -1,6 +1,10 @@
 # ChirpType
 
-macOS menu bar dictation powered by [parakeet-mlx](https://github.com/senstella/parakeet-mlx). Tap a hotkey, speak, and your words are instantly transcribed and pasted into any app.
+Tap a hotkey, speak, and your words appear — in any app, instantly.
+
+ChirpType is a macOS menu bar dictation tool built on [parakeet-mlx](https://github.com/senstella/parakeet-mlx). It runs entirely on-device using Apple Silicon. No cloud, no API keys, no subscription. Just fast, private speech-to-text that stays out of your way.
+
+**Philosophy:** one small icon in your menu bar, one hotkey, nothing else. It should feel like a native part of the OS — always there, never in the way. Every decision in this project is made in favour of simplicity over features.
 
 Requires Apple Silicon.
 
