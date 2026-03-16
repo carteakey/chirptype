@@ -32,16 +32,17 @@ CHUNK_DURATION    = 1.0   # seconds per audio chunk
 HOLD_THRESHOLD    = 0.3   # seconds to distinguish tap from hold
 DOUBLE_TAP_WINDOW = 0.4   # seconds to wait for a second tap
 
-ICON_PATH = Path(__file__).parent / "icon.png"
-LOG_PATH  = Path.home() / ".chirptype_log.txt"
+ICON_PATH     = Path(__file__).parent / "icon.png"
+ICON_REC_PATH = Path(__file__).parent / "icon_rec.png"
+LOG_PATH      = Path.home() / ".chirptype_log.txt"
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-ICON_IDLE       = ""       # icon only — title cleared when icon is present
-ICON_RECORDING  = " rec "
-ICON_PROCESSING = " ··· "
+ICON_IDLE       = "idle"
+ICON_RECORDING  = "recording"
+ICON_PROCESSING = "processing"
 
 IDLE              = "idle"
 HOLD_RECORDING    = "hold_recording"
@@ -80,24 +81,32 @@ app: "ChirpTypeApp | None" = None
 
 class ChirpTypeApp(rumps.App):
     def __init__(self):
-        icon = str(ICON_PATH) if ICON_PATH.exists() else None
-        super().__init__("ChirpType", title=" ct " if not icon else "",
-                         icon=icon, template=True, quit_button="Quit")
+        super().__init__("ChirpType", title="", icon=str(ICON_PATH),
+                         template=True, quit_button="Quit")
         self.status_item = rumps.MenuItem("Loading…")
         self.words_item  = rumps.MenuItem("Words: 0")
         self.last_item   = rumps.MenuItem("Last: —")
-        self.menu = [self.status_item, None, self.words_item, self.last_item]
+        self.copy_item   = rumps.MenuItem("Copy last transcript", callback=self._copy_last)
+        self._last_text  = ""
+        self.menu = [self.status_item, None, self.words_item, self.last_item, self.copy_item]
+
+    def _copy_last(self, _) -> None:
+        if self._last_text:
+            subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE).communicate(
+                self._last_text.encode('utf-8')
+            )
 
 
-def set_menu_bar_state(icon_text: str, status: str) -> None:
+def set_menu_bar_state(state_name: str, status: str) -> None:
     if app is None:
         return
-    # If the icon file exists: icon is always shown; only add a title when active.
-    # If no icon file: use text labels for all states.
-    if ICON_PATH.exists():
-        app.title = icon_text  # "" for idle, " rec " or " ··· " when active
+    if state_name == ICON_IDLE:
+        app.icon     = str(ICON_PATH)
+        app.template = True
     else:
-        app.title = " ct " if icon_text == ICON_IDLE else icon_text
+        app.icon     = str(ICON_REC_PATH)
+        app.template = False
+    app.title = ""
     app.status_item.title = status
 
 
@@ -247,6 +256,7 @@ def copy_and_paste(text: str) -> None:
         log_transcription(text)
         preview = text[:60] + ("…" if len(text) > 60 else "")
         if app is not None:
+            app._last_text       = text
             app.words_item.title = f"Words: {session_words}"
             app.last_item.title  = f"Last: {preview}"
             try:
