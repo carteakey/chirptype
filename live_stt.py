@@ -47,7 +47,6 @@ HOLD_RECORDING = "hold_recording"
 FIRST_TAP_PENDING = "first_tap_pending"
 LOCKED_RECORDING = "locked_recording"
 
-# Audio input device (None = system default)
 _SOUNDS = {
     "start": "/System/Library/Sounds/Tink.aiff",
     "stop":  "/System/Library/Sounds/Pop.aiff",
@@ -58,7 +57,6 @@ state_lock = threading.Lock()
 
 recording = threading.Event()   # .set() = recording, .clear() = stopped
 audio_queue: queue.Queue = queue.Queue()
-hotkey_pressed: set = set()
 hotkey_active = False           # True while hotkey is currently held
 hotkey_press_time = 0.0
 _double_tap_timer: threading.Timer | None = None
@@ -206,21 +204,13 @@ def _double_tap_timeout() -> None:
 # pynput keyboard listeners
 # ---------------------------------------------------------------------------
 
-def is_hotkey_combo() -> bool:
-    return Key.alt_r in hotkey_pressed
-
-
 def on_press(key) -> None:
-    was_combo = is_hotkey_combo()
-    hotkey_pressed.add(key)
-    if not was_combo and is_hotkey_combo():
+    if key == Key.alt_r:
         on_hotkey_activated()
 
 
 def on_release(key) -> None:
-    was_combo = is_hotkey_combo()
-    hotkey_pressed.discard(key)
-    if was_combo and not is_hotkey_combo():
+    if key == Key.alt_r:
         on_hotkey_deactivated()
 
 
@@ -232,8 +222,7 @@ def copy_and_paste(text: str) -> None:
     process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
     process.communicate(text.encode('utf-8'))
 
-    if not quiet_mode:
-        print("Copied to clipboard")
+    log("Copied to clipboard")
 
     verify = subprocess.run(['pbpaste'], capture_output=True, text=True)
     if verify.stdout != text:
@@ -247,8 +236,7 @@ def copy_and_paste(text: str) -> None:
                             capture_output=True, text=True, timeout=5)
 
     if result.returncode == 0:
-        if not quiet_mode:
-            print("Pasted successfully")
+        log("Pasted successfully")
         preview = text[:60] + ("…" if len(text) > 60 else "")
         if app is not None:
             app.last_item.title = f"Last: {preview}"
@@ -334,7 +322,7 @@ def transcription_loop(model, sample_rate: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _startup(model_name: str) -> None:
-    set_menu_bar_state("⏳", "Loading model…")
+    set_menu_bar_state(ICON_PROCESSING, "Loading model…")
     if not quiet_mode:
         print("\nLoading model...")
 
