@@ -54,46 +54,53 @@ Transcription is pasted automatically into your active text field. A **ChirpType
 
 The menu also shows the last transcribed text and a **Quit** option.
 
-## CLI Flags
+## Configuration
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--silence SECS` | `0` (off) | Auto-stop after N seconds of silence |
-| `--device NAME_OR_ID` | system default | Select a specific input device |
-| `--list-devices` | — | Print available audio input devices and exit |
-| `--quiet` / `-q` | off | Suppress all terminal output except errors |
+Settings are stored in `~/.chirptype.json` and persist across restarts. You can also edit them directly in the menu:
 
-**Example — use an external USB mic, auto-stop after 2 s of silence:**
-```bash
-chirptype --device "USB Audio" --silence 2.0
+- **Model** — pick a Parakeet variant from the submenu (restart to apply)
+- **Auto-stop on silence** — toggles 2-second silence detection on/off
+
+`~/.chirptype.json` example:
+```json
+{
+  "hotkey": "alt_r",
+  "model": "mlx-community/parakeet-tdt-0.6b-v3",
+  "silence": 0.0
+}
 ```
 
-**List available input devices:**
+| Key | Default | Options |
+|-----|---------|---------|
+| `hotkey` | `alt_r` | `alt_r`, `alt`, `ctrl_r`, `f13`–`f19` |
+| `model` | `parakeet-tdt-0.6b-v3` | see Model section |
+| `silence` | `0.0` (off) | seconds, e.g. `2.0` |
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--silence SECS` | Auto-stop after N seconds of silence (overrides config) |
+| `--device NAME_OR_ID` | Select a specific input device |
+| `--list-devices` | Print available audio input devices and exit |
+| `--quiet` / `-q` | Suppress all terminal output except errors |
+
 ```bash
+chirptype --device "USB Audio" --silence 2.0
 chirptype --list-devices
 ```
 
-To pass flags via the LaunchAgent, edit `~/Library/LaunchAgents/com.chirptype.plist`.
-
 ## Model
 
-Default model: **[mlx-community/parakeet-tdt-0.6b-v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)**
-- Architecture: NVIDIA Parakeet-TDT 0.6 B (Token-and-Duration Transducer)
-- Optimised for Apple Silicon via MLX
-- English only, ~1.2 GB on disk (downloaded on first run)
+Available models (selectable from the menu):
 
-To swap models, edit `MODEL_NAME` in `chirptype.py`.
+| Model | Size | Notes |
+|-------|------|-------|
+| `parakeet-tdt-0.6b-v3` | ~1.2 GB | Default, fast |
+| `parakeet-tdt-0.6b-v2` | ~1.2 GB | Previous version |
+| `parakeet-tdt-1.1b` | ~2.1 GB | More accurate, slower |
 
-## Configuration
-
-Edit `chirptype.py`:
-
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `MODEL_NAME` | `mlx-community/parakeet-tdt-0.6b-v3` | Parakeet model to load |
-| `CHUNK_DURATION` | `1.0` | Audio chunk size in seconds |
-| `HOLD_THRESHOLD` | `0.3` | Seconds to distinguish a tap from a hold |
-| `DOUBLE_TAP_WINDOW` | `0.4` | Window for double-tap detection (seconds) |
+All models are English-only, optimised for Apple Silicon via MLX, and downloaded on first use.
 
 ## License
 
