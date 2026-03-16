@@ -2,39 +2,35 @@
 
 macOS menu bar dictation powered by [parakeet-mlx](https://github.com/senstella/parakeet-mlx). Tap a hotkey, speak, and your words are instantly transcribed and pasted into any app.
 
+Requires Apple Silicon.
+
 ## Prerequisites
 
-1. **ffmpeg** — `brew install ffmpeg`
-2. **Microphone permission** — macOS will prompt on first run
-3. **Accessibility permission** — required for auto-paste
-   - System Settings → Privacy & Security → Accessibility → add your terminal app
+1. **uv** — `brew install uv`
+2. **ffmpeg** — `brew install ffmpeg`
+3. **Microphone permission** — macOS will prompt on first run
+4. **Accessibility permission** — required for auto-paste
+   - System Settings → Privacy & Security → Accessibility → add Terminal (or your shell)
 
-## Installation
+## Install
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
+git clone https://github.com/carteakey/chirptype
+cd chirptype
+./install.sh
 ```
 
-## Usage
+This installs the `chirptype` command via `uv tool install` and registers a LaunchAgent so it auto-starts at login. The menu bar icon appears immediately.
 
+**Uninstall:**
 ```bash
-python live_stt.py
+./install.sh uninstall
 ```
 
-ChirpType appears in your menu bar. The model loads in the background (~5s on first run).
+## Development
 
-**Quiet mode** (suppress terminal output):
 ```bash
-python live_stt.py --quiet
-```
-
-**Background service:**
-```bash
-./run_background.sh start    # start
-./run_background.sh logs     # tail logs
-./run_background.sh stop     # stop
+uv run python chirptype.py
 ```
 
 ## Recording
@@ -69,26 +65,28 @@ The menu also shows the last transcribed text and a **Quit** option.
 
 **Example — use an external USB mic, auto-stop after 2 s of silence:**
 ```bash
-python live_stt.py --device "USB Audio" --silence 2.0
+chirptype --device "USB Audio" --silence 2.0
 ```
 
 **List available input devices:**
 ```bash
-python live_stt.py --list-devices
+chirptype --list-devices
 ```
+
+To pass flags via the LaunchAgent, edit `~/Library/LaunchAgents/com.chirptype.plist`.
 
 ## Model
 
 Default model: **[mlx-community/parakeet-tdt-0.6b-v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)**
 - Architecture: NVIDIA Parakeet-TDT 0.6 B (Token-and-Duration Transducer)
 - Optimised for Apple Silicon via MLX
-- English only, ~1.2 GB on disk
+- English only, ~1.2 GB on disk (downloaded on first run)
 
-To swap models, edit `MODEL_NAME` in `live_stt.py`.
+To swap models, edit `MODEL_NAME` in `chirptype.py`.
 
 ## Configuration
 
-Edit `live_stt.py`:
+Edit `chirptype.py`:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
@@ -99,4 +97,4 @@ Edit `live_stt.py`:
 
 ## License
 
-Apache 2.0 (parakeet-mlx license)
+Apache 2.0
