@@ -16,6 +16,7 @@ import time
 import subprocess
 import argparse
 import json
+import shutil
 from pathlib import Path
 import numpy as np
 import mlx.core as mx
@@ -372,7 +373,11 @@ def transcription_loop(model, sample_rate: int) -> None:
 
                         result = transcriber.result
                         if result.text != last_text and not quiet_mode:
-                            print(f"\rTranscription: {result.text}", end='', flush=True)
+                            cols = shutil.get_terminal_size().columns
+                            prefix = "Transcription: "
+                            max_text = cols - len(prefix) - 1
+                            tail = result.text[-max_text:] if len(result.text) > max_text else result.text
+                            print(f"\r{prefix}{tail:<{max_text}}", end='', flush=True)
                             last_text = result.text
                     except queue.Empty:
                         continue
