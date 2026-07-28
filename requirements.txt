@@ -1,6 +1,15 @@
-parakeet-mlx>=0.4.0
+# Shared runtime
 sounddevice>=0.5.0
 pynput>=1.8.0
 numpy>=2.0.0
-mlx>=0.29.0
-rumps>=0.4.0
+
+# macOS: Apple Silicon / menu bar
+parakeet-mlx>=0.4.0; sys_platform == "darwin"
+mlx>=0.29.0; sys_platform == "darwin"
+rumps>=0.4.0; sys_platform == "darwin"
+
+# Windows: CPU-friendly local transcription / system tray
+faster-whisper>=1.1.0; sys_platform == "win32"
+pystray>=0.19.5; sys_platform == "win32"
+Pillow>=10.0; sys_platform == "win32"
+pyperclip>=1.9.0; sys_platform == "win32"

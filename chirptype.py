@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-ChirpType — macOS menu bar dictation powered by parakeet-mlx
+ChirpType — desktop dictation powered by a local speech-to-text model
 
-Hotkey: Right Option (⌥ right)
+Hotkey: Right Option (⌥) on macOS; Right Alt on Windows
   Press-and-hold : Hold while speaking, release to transcribe.
   Double-tap     : Double-tap to lock recording, tap once more to transcribe.
 """
+
+from __future__ import annotations
 
 import threading
 import queue
@@ -16,22 +18,36 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import numpy as np
-import mlx.core as mx
-import rumps
 import sounddevice as sd
 from pynput import keyboard
 from pynput.keyboard import Key
-from parakeet_mlx import from_pretrained
+
+IS_MACOS = sys.platform == "darwin"
+IS_WINDOWS = sys.platform == "win32"
+
+if IS_MACOS:
+    import mlx.core as mx
+    import rumps
+    from parakeet_mlx import from_pretrained
+elif IS_WINDOWS:
+    import pyperclip
+    import pystray
+    from PIL import Image
+    from faster_whisper import WhisperModel
+else:
+    raise RuntimeError("ChirpType currently supports macOS and Windows.")
 
 # ---------------------------------------------------------------------------
 # Edit these to customise
 # ---------------------------------------------------------------------------
 
 VERSION           = "0.1.0"
-MODEL_NAME        = "mlx-community/parakeet-tdt-0.6b-v3"
-CHUNK_DURATION    = 1.0   # seconds per audio chunk
-HOLD_THRESHOLD    = 0.3   # seconds to distinguish tap from hold
-DOUBLE_TAP_WINDOW = 0.4   # seconds to wait for a second tap
+MAC_MODEL_NAME     = "mlx-community/parakeet-tdt-0.6b-v3"
+WINDOWS_MODEL_NAME = "base.en"
+MODEL_NAME         = MAC_MODEL_NAME if IS_MACOS else WINDOWS_MODEL_NAME
+CHUNK_DURATION     = 1.0   # seconds per audio chunk
+HOLD_THRESHOLD     = 0.3   # seconds to distinguish tap from hold
+DOUBLE_TAP_WINDOW  = 0.4   # seconds to wait for a second tap
 
 ICON_PATH     = Path(__file__).parent / "icon.png"
 ICON_REC_PATH = Path(__file__).parent / "icon_rec.png"
@@ -53,7 +69,7 @@ LOCKED_RECORDING  = "locked_recording"
 _SOUNDS = {
     "start": "/System/Library/Sounds/Tink.aiff",
     "stop":  "/System/Library/Sounds/Pop.aiff",
-}
+} if IS_MACOS else {}
 
 # ---------------------------------------------------------------------------
 # Runtime state
@@ -77,37 +93,116 @@ app: "ChirpTypeApp | None" = None
 
 
 # ---------------------------------------------------------------------------
-# Menu bar app
+# Tray/menu bar app
 # ---------------------------------------------------------------------------
 
-class ChirpTypeApp(rumps.App):
-    def __init__(self):
-        super().__init__("ChirpType", title="", icon=str(ICON_PATH),
-                         template=True, quit_button="Quit")
-        self.title_item  = rumps.MenuItem(f"ChirpType v{VERSION}")
-        self.words_item  = rumps.MenuItem("Words: 0")
-        self.last_item   = rumps.MenuItem("Last: —")
-        self.copy_item   = rumps.MenuItem("Copy last transcript", callback=self._copy_last)
-        self._last_text  = ""
-        self.menu = [self.title_item, None, self.words_item, self.last_item, self.copy_item]
+if IS_MACOS:
+    class ChirpTypeApp(rumps.App):
+        def __init__(self):
+            super().__init__("ChirpType", title="", icon=str(ICON_PATH),
+                             template=True, quit_button="Quit")
+            self.title_item  = rumps.MenuItem(f"ChirpType v{VERSION}")
+            self.words_item  = rumps.MenuItem("Words: 0")
+            self.last_item   = rumps.MenuItem("Last: —")
+            self.copy_item   = rumps.MenuItem("Copy last transcript", callback=self._copy_last)
+            self._last_text  = ""
+            self.menu = [self.title_item, None, self.words_item, self.last_item, self.copy_item]
 
-    def _copy_last(self, _) -> None:
-        if self._last_text:
-            subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE).communicate(
-                self._last_text.encode('utf-8')
+        def _copy_last(self, _) -> None:
+            if self._last_text:
+                copy_to_clipboard(self._last_text)
+
+        def update_transcript(self, text: str, words: int) -> None:
+            self._last_text       = text
+            self.words_item.title = f"Words: {words}"
+            preview = text[:60] + ("…" if len(text) > 60 else "")
+            self.last_item.title  = f"Last: {preview}"
+
+        def notify(self, message: str) -> None:
+            try:
+                rumps.notification("ChirpType", "", message, sound=False)
+            except Exception:
+                pass
+else:
+    class ChirpTypeApp:
+        """Windows system-tray wrapper for the same small app surface."""
+
+        def __init__(self):
+            self._last_text = ""
+            self._words = 0
+            self.tray = pystray.Icon(
+                "ChirpType",
+                self._load_icon(ICON_PATH),
+                f"ChirpType v{VERSION}",
+                menu=pystray.Menu(
+                    pystray.MenuItem(
+                        lambda _: f"ChirpType v{VERSION}",
+                        None,
+                        enabled=False,
+                    ),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem(
+                        lambda _: f"Words: {self._words}",
+                        None,
+                        enabled=False,
+                    ),
+                    pystray.MenuItem(
+                        self._last_label,
+                        None,
+                        enabled=False,
+                    ),
+                    pystray.MenuItem("Copy last transcript", self._copy_last),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Quit", self._quit),
+                ),
             )
+
+        @staticmethod
+        def _load_icon(path: Path):
+            with Image.open(path) as image:
+                return image.convert("RGBA")
+
+        def _last_label(self, _) -> str:
+            preview = self._last_text[:60] + ("…" if len(self._last_text) > 60 else "")
+            return f"Last: {preview or '—'}"
+
+        def _copy_last(self, _, __) -> None:
+            if self._last_text:
+                copy_to_clipboard(self._last_text)
+
+        def _quit(self, icon, _) -> None:
+            icon.stop()
+
+        def update_transcript(self, text: str, words: int) -> None:
+            self._last_text = text
+            self._words = words
+            self.tray.update_menu()
+
+        def notify(self, message: str) -> None:
+            try:
+                self.tray.notify(message, "ChirpType")
+            except Exception:
+                pass
+
+        def run(self) -> None:
+            self.tray.run()
 
 
 def set_menu_bar_state(state_name: str) -> None:
     if app is None:
         return
-    if state_name == ICON_IDLE:
-        app.icon     = str(ICON_PATH)
-        app.template = True
+    if IS_MACOS:
+        if state_name == ICON_IDLE:
+            app.icon     = str(ICON_PATH)
+            app.template = True
+        else:
+            app.icon     = str(ICON_REC_PATH)
+            app.template = False
+        app.title = ""
     else:
-        app.icon     = str(ICON_REC_PATH)
-        app.template = False
-    app.title = ""
+        app.tray.icon = app._load_icon(
+            ICON_PATH if state_name == ICON_IDLE else ICON_REC_PATH
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +215,14 @@ def log(msg: str) -> None:
 
 
 def play_sound(name: str) -> None:
+    if IS_WINDOWS:
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_OK if name == "start" else winsound.MB_ICONASTERISK)
+        except Exception:
+            pass
+        return
+
     path = _SOUNDS.get(name)
     if path:
         subprocess.Popen(["afplay", path],
@@ -127,12 +230,28 @@ def play_sound(name: str) -> None:
 
 
 def log_transcription(text: str) -> None:
-    with open(LOG_PATH, "a") as f:
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  {text}\n")
+
+
+def copy_to_clipboard(text: str) -> None:
+    if IS_WINDOWS:
+        pyperclip.copy(text)
+    else:
+        subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE).communicate(
+            text.encode("utf-8")
+        )
+
+
+def read_clipboard() -> str:
+    if IS_WINDOWS:
+        return pyperclip.paste()
+    return subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
 
 
 def start_recording() -> None:
     global last_audio_time
+    _drain_audio_queue()
     last_audio_time = time.time()
     recording.set()
     play_sound("start")
@@ -233,43 +352,54 @@ def on_release(key) -> None:
 def copy_and_paste(text: str) -> None:
     global session_words
 
-    process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
-    process.communicate(text.encode('utf-8'))
+    try:
+        copy_to_clipboard(text)
+        verify = read_clipboard()
+    except Exception as exc:
+        print(f"ERROR: Clipboard unavailable: {exc}", file=sys.stderr)
+        return
+
     log("Copied to clipboard")
 
-    verify = subprocess.run(['pbpaste'], capture_output=True, text=True)
-    if verify.stdout != text:
+    if verify != text:
         print("ERROR: Clipboard verification failed", file=sys.stderr)
         return
 
     time.sleep(0.3)
 
-    result = subprocess.run(
-        ['osascript', '-e',
-         'tell application "System Events" to keystroke "v" using {command down}'],
-        capture_output=True, text=True, timeout=5,
-    )
+    if IS_WINDOWS:
+        try:
+            controller = keyboard.Controller()
+            with controller.pressed(Key.ctrl):
+                controller.press("v")
+            paste_succeeded = True
+            paste_error = ""
+        except Exception as exc:
+            paste_succeeded = False
+            paste_error = str(exc)
+    else:
+        result = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to keystroke "v" using {command down}'],
+            capture_output=True, text=True, timeout=5,
+        )
+        paste_succeeded = result.returncode == 0
+        paste_error = result.stderr.strip()
 
-    if result.returncode == 0:
+    if paste_succeeded:
         log("Pasted successfully")
         session_words += len(text.split())
         log_transcription(text)
         preview = text[:60] + ("…" if len(text) > 60 else "")
         if app is not None:
-            app._last_text       = text
-            app.words_item.title = f"Words: {session_words}"
-            app.last_item.title  = f"Last: {preview}"
-            try:
-                rumps.notification("ChirpType", "", preview, sound=False)
-            except Exception:
-                pass
+            app.update_transcript(text, session_words)
+            app.notify(preview)
     else:
-        err = result.stderr.strip()
-        if "not allowed assistive access" in err.lower():
+        if "not allowed assistive access" in paste_error.lower():
             print("ERROR: Accessibility permission denied. "
                   "System Settings → Privacy & Security → Accessibility", file=sys.stderr)
         else:
-            print(f"ERROR: Paste failed: {err}", file=sys.stderr)
+            print(f"ERROR: Paste failed: {paste_error}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +424,10 @@ def transcription_loop(model, sample_rate: int) -> None:
                         device=input_device):
         while True:
             recording.wait()
+
+            if IS_WINDOWS:
+                _transcribe_windows_recording(model)
+                continue
 
             with model.transcribe_stream(context_size=(256, 256)) as transcriber:
                 while not audio_queue.empty():
@@ -322,6 +456,57 @@ def transcription_loop(model, sample_rate: int) -> None:
                 set_menu_bar_state(ICON_IDLE)
 
 
+def _drain_audio_queue() -> list[np.ndarray]:
+    chunks = []
+    while True:
+        try:
+            chunks.append(audio_queue.get_nowait())
+        except queue.Empty:
+            return chunks
+
+
+def _transcribe_windows_recording(model) -> None:
+    """Transcribe one completed recording with faster-whisper."""
+    chunks = []
+
+    while recording.is_set():
+        _check_silence()
+        try:
+            chunks.append(audio_queue.get(timeout=0.1))
+        except queue.Empty:
+            continue
+
+    # Capture callbacks that raced with recording.clear().
+    chunks.extend(_drain_audio_queue())
+    set_menu_bar_state(ICON_PROCESSING)
+
+    if not chunks:
+        set_menu_bar_state(ICON_IDLE)
+        return
+
+    audio = np.concatenate(chunks, axis=0).flatten()
+    log("\nTranscribing...")
+
+    try:
+        segments, _ = model.transcribe(
+            audio,
+            language="en",
+            beam_size=5,
+            vad_filter=True,
+        )
+        text = "".join(segment.text for segment in segments).strip()
+    except Exception as exc:
+        print(f"ERROR: Transcription failed: {exc}", file=sys.stderr)
+        set_menu_bar_state(ICON_IDLE)
+        return
+
+    if text:
+        log(f"\nFinal: {text}\n")
+        copy_and_paste(text)
+
+    set_menu_bar_state(ICON_IDLE)
+
+
 # ---------------------------------------------------------------------------
 # Startup + entry point
 # ---------------------------------------------------------------------------
@@ -330,11 +515,17 @@ def _startup() -> None:
     set_menu_bar_state(ICON_PROCESSING)
     log(f"\nLoading {MODEL_NAME}...")
 
-    model = from_pretrained(MODEL_NAME)
-    sample_rate = model.preprocessor_config.sample_rate
+    if IS_MACOS:
+        model = from_pretrained(MODEL_NAME)
+        sample_rate = model.preprocessor_config.sample_rate
+    else:
+        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        sample_rate = 16_000
 
     if not quiet_mode:
-        print(f"Ready — {sample_rate} Hz | hotkey: Right Option (⌥)")
+        hotkey_name = "Right Option (⌥)" if IS_MACOS else "Right Alt"
+        backend_name = "parakeet-mlx" if IS_MACOS else "faster-whisper"
+        print(f"Ready — {sample_rate} Hz | {backend_name} | hotkey: {hotkey_name}")
 
     set_menu_bar_state(ICON_IDLE)
     keyboard.Listener(on_press=on_press, on_release=on_release).start()
@@ -344,7 +535,7 @@ def _startup() -> None:
 def main() -> None:
     global quiet_mode, input_device, silence_duration, app
 
-    parser = argparse.ArgumentParser(description='ChirpType — macOS menu bar dictation')
+    parser = argparse.ArgumentParser(description='ChirpType — local desktop dictation')
     parser.add_argument('--quiet', '-q', action='store_true')
     parser.add_argument('--device', default=None, help='Input device name or index')
     parser.add_argument('--list-devices', action='store_true')
